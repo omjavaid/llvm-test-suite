@@ -92,28 +92,28 @@ typedef int rlim_t;
 /* @{ */
 
 /* \brief If non-sentinel, the CPU time limit to set for the target. */
-static rlim_t g_target_cpu_limit = ~(rlim_t) 0;
+static rlim_t g_target_cpu_limit = ~(rlim_t)0;
 
 /* \brief If non-sentinel, the stack size limit to set for the target. */
-static rlim_t g_target_stack_size_limit = ~(rlim_t) 0;
+static rlim_t g_target_stack_size_limit = ~(rlim_t)0;
 
 /* \brief If non-sentinel, the data size limit to set for the target. */
-static rlim_t g_target_data_size_limit = ~(rlim_t) 0;
+static rlim_t g_target_data_size_limit = ~(rlim_t)0;
 
 /* \brief If non-sentinel, the RSS size limit to set for the target. */
-static rlim_t g_target_rss_size_limit = ~(rlim_t) 0;
+static rlim_t g_target_rss_size_limit = ~(rlim_t)0;
 
 /* \brief If non-sentinel, the file size limit to set for the target. */
-static rlim_t g_target_file_size_limit = ~(rlim_t) 0;
+static rlim_t g_target_file_size_limit = ~(rlim_t)0;
 
 /* \brief If non-sentinel, the core limit to set for the target. */
-static rlim_t g_target_core_limit = ~(rlim_t) 0;
+static rlim_t g_target_core_limit = ~(rlim_t)0;
 
 /* \brief If non-sentinel, the file count limit to set for the target. */
-static rlim_t g_target_file_count_limit = ~(rlim_t) 0;
+static rlim_t g_target_file_count_limit = ~(rlim_t)0;
 
 /* \brief If non-sentinel, the subprocess count limit to set for the target. */
-static rlim_t g_target_subprocess_count_limit = ~(rlim_t) 0;
+static rlim_t g_target_subprocess_count_limit = ~(rlim_t)0;
 
 /* @} */
 
@@ -140,8 +140,9 @@ static void terminate_handler(int signal) {
    * complete normally.
    */
   if (g_monitored_pid) {
-    fprintf(stderr, ("%s: error: received signal %d. "
-                     "killing monitored process(es): %s\n"),
+    fprintf(stderr,
+            ("%s: error: received signal %d. "
+             "killing monitored process(es): %s\n"),
             g_program_name, signal, g_target_program);
 
     /* Kill the process group of monitored_pid. */
@@ -149,8 +150,8 @@ static void terminate_handler(int signal) {
     return;
   }
 
-  fprintf(stderr, "%s: error: received signal %d. exiting.\n",
-          g_program_name, signal);
+  fprintf(stderr, "%s: error: received signal %d. exiting.\n", g_program_name,
+          signal);
   /* Otherwise, we received a signal we should treat as for ourselves, and exit
    * quickly. */
   _exit(EXITCODE_SIGNALLED);
@@ -203,8 +204,9 @@ static int monitor_child_process(pid_t pid, double start_time) {
     perror("getrusage");
     return EXITCODE_MONITORING_FAILURE;
   }
-  user_time = (double) usage.ru_utime.tv_sec + usage.ru_utime.tv_usec/1000000.0;
-  sys_time = (double) usage.ru_stime.tv_sec + usage.ru_stime.tv_usec/1000000.0;
+  user_time =
+      (double)usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1000000.0;
+  sys_time = (double)usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1000000.0;
 
   /* If the process was signalled, report a more interesting status. */
   int exit_status;
@@ -225,11 +227,11 @@ static int monitor_child_process(pid_t pid, double start_time) {
   // would.
   if (!g_summary_file) {
     if (g_posix_mode) {
-      fprintf(stderr, "real %12.4f\nuser %12.4f\nsys  %12.4f\n",
-              real_time, user_time, sys_time);
+      fprintf(stderr, "real %12.4f\nuser %12.4f\nsys  %12.4f\n", real_time,
+              user_time, sys_time);
     } else {
-      fprintf(stderr, "%12.4f real %12.4f user %12.4f sys\n",
-              real_time, user_time, sys_time);
+      fprintf(stderr, "%12.4f real %12.4f user %12.4f sys\n", real_time,
+              user_time, sys_time);
     }
   } else {
     /* Otherwise, write the summary data in a simple parsable format. */
@@ -261,7 +263,7 @@ static int monitor_child_process(pid_t pid, double start_time) {
   return exit_status;
 }
 
-#define set_resource_limit(resource, value) \
+#define set_resource_limit(resource, value)                                    \
   set_resource_limit_actual(#resource, resource, value)
 static void set_resource_limit_actual(const char *resource_name, int resource,
                                       rlim_t value) {
@@ -271,12 +273,12 @@ static void set_resource_limit_actual(const char *resource_name, int resource,
 
   /* Set the limits to as close as requested, assuming we are not super-user. */
   struct rlimit requested;
-  requested.rlim_cur = requested.rlim_max = \
-    (value < current.rlim_max) ? value : current.rlim_max;
+  requested.rlim_cur = requested.rlim_max =
+      (value < current.rlim_max) ? value : current.rlim_max;
   if (setrlimit(resource, &requested) < 0) {
     fprintf(stderr, "%s: warning: unable to set limit for %s (to {%lu, %lu})\n",
-            g_program_name, resource_name, (unsigned long) requested.rlim_cur,
-            (unsigned long) requested.rlim_max);
+            g_program_name, resource_name, (unsigned long)requested.rlim_cur,
+            (unsigned long)requested.rlim_max);
   }
 }
 #endif
@@ -349,7 +351,6 @@ static int monitor_child_process(HANDLE job_object, double start_time) {
   /* Record the real elapsed time as soon as we can. */
   real_time = sample_wall_time() - start_time;
 
-
   /* Check if process finished cleanly */
   if (!GetExitCodeProcess(proc_info.hProcess, &status)) {
     fprintf(stderr, "Failed to get exit code!\n");
@@ -367,7 +368,7 @@ static int monitor_child_process(HANDLE job_object, double start_time) {
       fprintf(stderr, "%s: error: child terminated by signal %d\n",
               g_program_name, exit_status);
       exit_status = EXITCODE_CHILD_SIGNALLED;
-    } 
+    }
   }
 
   /* Clean up the timer and timer queue. */
@@ -493,19 +494,18 @@ static int execute_target_process(char *const argv[]) {
 
   /* Set up the error file handle for the child process. */
   if (g_target_redirect_stderr) {
-    if (!streq(g_target_redirect_stdout, g_target_redirect_stderr))
-    {
+    if (!streq(g_target_redirect_stdout, g_target_redirect_stderr)) {
 
-    HANDLE error_file_handle =
-        CreateFile(g_target_redirect_stderr, GENERIC_WRITE, 0, &sec_attr,
-                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (error_file_handle == INVALID_HANDLE_VALUE) {
-      perror("CreateFile failed for redirected error");
-      return EXITCODE_MONITORING_FAILURE;
-    }
-    sec_info.hStdError = error_file_handle;
+      HANDLE error_file_handle =
+          CreateFile(g_target_redirect_stderr, GENERIC_WRITE, 0, &sec_attr,
+                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+      if (error_file_handle == INVALID_HANDLE_VALUE) {
+        perror("CreateFile failed for redirected error");
+        return EXITCODE_MONITORING_FAILURE;
+      }
+      sec_info.hStdError = error_file_handle;
     } else
-    sec_info.hStdError = sec_info.hStdOutput;
+      sec_info.hStdError = sec_info.hStdOutput;
   }
 
   /* Create a job object to manage the child process resources. */
@@ -598,8 +598,8 @@ static int execute_target_process(char *const argv[]) {
 
   /* Create the child process. */
   if (!CreateProcess(NULL, create_process_commandline(argv), NULL, NULL, TRUE,
-                      CREATE_NEW_PROCESS_GROUP, NULL, NULL,
-                     &sec_info, &proc_info)) {
+                     CREATE_NEW_PROCESS_GROUP, NULL, NULL, &sec_info,
+                     &proc_info)) {
     // Error handling if CreateProcess() fails
     fprintf(stderr, "Failed to create process. Error code: %lu\n",
             GetLastError());
@@ -686,13 +686,13 @@ static int execute_target_process(char *const argv[]) {
     fclose(fp_stdout);
 
   /* Honor any requested resource limits. */
-  if (g_target_cpu_limit != ~(rlim_t) 0) {
+  if (g_target_cpu_limit != ~(rlim_t)0) {
     set_resource_limit(RLIMIT_CPU, g_target_cpu_limit);
   }
-  if (g_target_stack_size_limit != ~(rlim_t) 0) {
+  if (g_target_stack_size_limit != ~(rlim_t)0) {
     set_resource_limit(RLIMIT_STACK, g_target_stack_size_limit);
   }
-  if (g_target_data_size_limit != ~(rlim_t) 0) {
+  if (g_target_data_size_limit != ~(rlim_t)0) {
     set_resource_limit(RLIMIT_DATA, g_target_data_size_limit);
   }
 #if defined(RLIMIT_RSS) && !defined(__APPLE__)
@@ -701,21 +701,21 @@ static int execute_target_process(char *const argv[]) {
   // incompatible with the current usage in timeit and can cause issues on
   // platforms enforcing strict virtual memory size limits. Ignore RLIMIT_RSS on
   // Apple platforms for now.
-  if (g_target_rss_size_limit != ~(rlim_t) 0) {
+  if (g_target_rss_size_limit != ~(rlim_t)0) {
     set_resource_limit(RLIMIT_RSS, g_target_rss_size_limit);
   }
 #endif
-  if (g_target_file_size_limit != ~(rlim_t) 0) {
+  if (g_target_file_size_limit != ~(rlim_t)0) {
     set_resource_limit(RLIMIT_FSIZE, g_target_file_size_limit);
   }
-  if (g_target_core_limit != ~(rlim_t) 0) {
+  if (g_target_core_limit != ~(rlim_t)0) {
     set_resource_limit(RLIMIT_CORE, g_target_core_limit);
   }
-  if (g_target_file_count_limit != ~(rlim_t) 0) {
+  if (g_target_file_count_limit != ~(rlim_t)0) {
     set_resource_limit(RLIMIT_NOFILE, g_target_file_count_limit);
   }
 #ifdef RLIMIT_NPROC
-  if (g_target_subprocess_count_limit != ~(rlim_t) 0) {
+  if (g_target_subprocess_count_limit != ~(rlim_t)0) {
     set_resource_limit(RLIMIT_NPROC, g_target_subprocess_count_limit);
   }
 #endif
@@ -781,8 +781,7 @@ static void usage(int is_error) {
   fprintf(stderr, "usage: %s [options] command ... arguments ...\n",
           g_program_name);
   fprintf(stderr, "Options:\n");
-  fprintf(stderr, "  %-20s %s", "-h, --help",
-          "Show this help text.\n");
+  fprintf(stderr, "  %-20s %s", "-h, --help", "Show this help text.\n");
   fprintf(stderr, "  %-20s %s", "-p, --posix",
           "Report time in /usr/bin/time POSIX format.\n");
   fprintf(stderr, "  %-20s %s", "-t, --timeout <N>",
@@ -815,13 +814,12 @@ static void usage(int is_error) {
           (WRAPPED
            "Limit the maximum number of open files the target can have.\n"));
   fprintf(stderr, "  %-20s %s", "--limit-subprocess-count <N>",
-          (WRAPPED
-           "Limit the maximum number of simultaneous processes "
-           "the target can use.\n"));
+          (WRAPPED "Limit the maximum number of simultaneous processes "
+                   "the target can use.\n"));
   _exit(is_error);
 }
 
-int main(int argc, char * const argv[]) {
+int main(int argc, char *const argv[]) {
   int i;
 
   g_program_name = argv[0];
