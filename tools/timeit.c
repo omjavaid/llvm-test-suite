@@ -15,7 +15,7 @@
 #include <signal.h>
 
 #if _WIN32
-#include <Windows.h>
+#include <windows.h>
 #else
 #include <unistd.h>
 
@@ -82,10 +82,11 @@ static const char *g_target_redirect_stderr = 0;
 static int g_append_exitstats = 0;
 
 #ifdef _WIN32
-#ifndef rlim_t
 /* \brief If platform does not define rlim_t type, then define it as int. */
 typedef int rlim_t;
-#endif
+
+/* \brief If platform does not define pid_t type, then define it as int. */
+typedef int pid_t;
 #endif
 
 /* @name Resource Limit Variables */
@@ -123,6 +124,8 @@ static double sample_wall_time(void) {
   gettimeofday(&t, NULL);
   return (double)t.tv_sec + t.tv_usec * 1.e-6;
 #else
+  /* frequency init below is not thread-safe. Consider using a mutex if
+   * sample_wall_time is required to be thread-safe in future. */
   static LARGE_INTEGER frequency = {0};
   if (frequency.QuadPart == 0)
     QueryPerformanceFrequency(&frequency);
@@ -167,10 +170,92 @@ static void timeout_handler(int signal) {
   kill(-g_monitored_pid, SIGKILL);
 }
 
+#define set_resource_limit(resource, value)                                    \
+  set_resource_limit_actual(#resource, resource, value)
+static void set_resource_limit_actual(const char *resource_name, int resource,
+                                      rlim_t value) {
+  /* Get the current limit. */
+  struct rlimit current;
+  getrlimit(resource, &current);
+
+  /* Set the limits to as close as requested, assuming we are not super-user. */
+  struct rlimit requested;
+  requested.rlim_cur = requested.rlim_max =
+      (value < current.rlim_max) ? value : current.rlim_max;
+  if (setrlimit(resource, &requested) < 0) {
+    fprintf(stderr, "%s: warning: unable to set limit for %s (to {%lu, %lu})\n",
+            g_program_name, resource_name, (unsigned long)requested.rlim_cur,
+            (unsigned long)requested.rlim_max);
+  }
+}
+#else
+
+/* Windows-specific implementation of fopen. */
+static FILE *windows_fopen(const char *filename, const char *mode) {
+  FILE *file;
+  if (fopen_s(&file, filename, mode))
+    return NULL;
+  return file;
+}
+#define fopen(filename, mode) windows_fopen(filename, mode)
+
+/* Process information struct global variable. */
+PROCESS_INFORMATION proc_info = {0};
+HANDLE h_output_file = INVALID_HANDLE_VALUE;
+HANDLE job_handle = INVALID_HANDLE_VALUE;
+
+/* Exit status global variable. */
+int exit_status = 0;
+
+/* Kill process group function. */
+void kill_process_group(DWORD groupId) {
+  GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, groupId);
+}
+
+/* Control handler function. */
+BOOL WINAPI ctrl_handler(DWORD fdw_ctrl_type) {
+  switch (fdw_ctrl_type) {
+  case CTRL_C_EVENT:
+  case CTRL_CLOSE_EVENT:
+  case CTRL_BREAK_EVENT:
+  case CTRL_LOGOFF_EVENT:
+  case CTRL_SHUTDOWN_EVENT:
+    exit_status = 1;
+    kill_process_group(proc_info.dwProcessId);
+    return FALSE;
+  default:
+    return FALSE;
+  }
+}
+
+/* Timer callback function. */
+VOID CALLBACK timer_callback(PVOID lpParam, BOOLEAN TimerOrWaitFired) {
+  exit_status = 2;
+  kill_process_group(proc_info.dwProcessId);
+}
+
+LPSTR create_process_commandline(char *const argv[]) {
+  /* Convert argv to CreateProcess style commandline. */
+  char *command_line = malloc(1);
+  command_line[0] = '\0';
+  int argc = 0;
+  while (argv[argc] != NULL) {
+    int size = strlen(command_line) + strlen(argv[argc]) + 2;
+    command_line = realloc(command_line, size);
+    strcat_s(command_line, size, argv[argc]);
+    strcat_s(command_line, size, " ");
+    argc++;
+  }
+  command_line[strlen(command_line) - 1] = '\0';
+  return command_line;
+}
+#endif
+
 static int monitor_child_process(pid_t pid, double start_time) {
   double real_time, user_time, sys_time;
-  struct rusage usage;
   int res, status;
+#ifndef _WIN32
+  struct rusage usage;
 
   /* Record the PID we are monitoring, for use in the signal handlers. */
   g_monitored_pid = pid;
@@ -223,104 +308,7 @@ static int monitor_child_process(pid_t pid, double start_time) {
     exit_status = EXITCODE_MONITORING_FAILURE;
   }
 
-  // If we are not using a summary file, report the information as /usr/bin/time
-  // would.
-  if (!g_summary_file) {
-    if (g_posix_mode) {
-      fprintf(stderr, "real %12.4f\nuser %12.4f\nsys  %12.4f\n", real_time,
-              user_time, sys_time);
-    } else {
-      fprintf(stderr, "%12.4f real %12.4f user %12.4f sys\n", real_time,
-              user_time, sys_time);
-    }
-  } else {
-    /* Otherwise, write the summary data in a simple parsable format. */
-    FILE *fp = fopen(g_summary_file, "w");
-    if (!fp) {
-      perror("fopen");
-      return EXITCODE_MONITORING_FAILURE;
-    }
-
-    fprintf(fp, "exit %d\n", exit_status);
-    fprintf(fp, "%-10s %.4f\n", "real", real_time);
-    fprintf(fp, "%-10s %.4f\n", "user", user_time);
-    fprintf(fp, "%-10s %.4f\n", "sys", sys_time);
-    fclose(fp);
-  }
-
-  if (g_append_exitstats && g_target_program) {
-    FILE *fp_stdout = fopen(g_target_redirect_stdout, "a");
-    if (!fp_stdout) {
-      perror("fopen");
-      return EXITCODE_MONITORING_FAILURE;
-    }
-    fprintf(fp_stdout, "exit %d\n", exit_status);
-    fclose(fp_stdout);
-    /* let timeit itself report success */
-    exit_status = 0;
-  }
-
-  return exit_status;
-}
-
-#define set_resource_limit(resource, value)                                    \
-  set_resource_limit_actual(#resource, resource, value)
-static void set_resource_limit_actual(const char *resource_name, int resource,
-                                      rlim_t value) {
-  /* Get the current limit. */
-  struct rlimit current;
-  getrlimit(resource, &current);
-
-  /* Set the limits to as close as requested, assuming we are not super-user. */
-  struct rlimit requested;
-  requested.rlim_cur = requested.rlim_max =
-      (value < current.rlim_max) ? value : current.rlim_max;
-  if (setrlimit(resource, &requested) < 0) {
-    fprintf(stderr, "%s: warning: unable to set limit for %s (to {%lu, %lu})\n",
-            g_program_name, resource_name, (unsigned long)requested.rlim_cur,
-            (unsigned long)requested.rlim_max);
-  }
-}
-#endif
-
-#ifdef _WIN32
-/* Process information struct global variable. */
-PROCESS_INFORMATION proc_info = {0};
-HANDLE h_output_file = INVALID_HANDLE_VALUE;
-
-/* Exit status global variable. */
-int exit_status = 0;
-
-/* Kill process group function. */
-void kill_process_group(DWORD groupId) {
-  GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, groupId);
-}
-
-/* Control handler function. */
-BOOL WINAPI ctrl_handler(DWORD fdw_ctrl_type) {
-  switch (fdw_ctrl_type) {
-  case CTRL_C_EVENT:
-  case CTRL_CLOSE_EVENT:
-  case CTRL_BREAK_EVENT:
-  case CTRL_LOGOFF_EVENT:
-  case CTRL_SHUTDOWN_EVENT:
-    exit_status = 1;
-    kill_process_group(proc_info.dwProcessId);
-    return FALSE;
-  default:
-    return FALSE;
-  }
-}
-
-/* Timer callback function. */
-VOID CALLBACK timer_callback(PVOID lpParam, BOOLEAN TimerOrWaitFired) {
-  exit_status = 2;
-  kill_process_group(proc_info.dwProcessId);
-}
-
-static int monitor_child_process(HANDLE job_object, double start_time) {
-  double real_time, user_time, sys_time;
-  int res, status;
+#else
 
   /* If we are running with a timeout, set up an alarm now. */
   HANDLE timer_handle = INVALID_HANDLE_VALUE;
@@ -382,7 +370,7 @@ static int monitor_child_process(HANDLE job_object, double start_time) {
   // Query the job object information
   JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accountingInfo;
   if (QueryInformationJobObject(
-          job_object, JobObjectBasicAccountingInformation, &accountingInfo,
+          job_handle, JobObjectBasicAccountingInformation, &accountingInfo,
           sizeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION), NULL)) {
     user_time = (double)accountingInfo.TotalUserTime.QuadPart / 10000.0;
     sys_time = (double)accountingInfo.TotalKernelTime.QuadPart / 10000.0;
@@ -392,6 +380,8 @@ static int monitor_child_process(HANDLE job_object, double start_time) {
     exit_status = EXITCODE_MONITORING_FAILURE;
     return exit_status;
   }
+
+#endif
 
   // If we are not using a summary file, report the information as /usr/bin/time
   // would.
@@ -405,8 +395,8 @@ static int monitor_child_process(HANDLE job_object, double start_time) {
     }
   } else {
     /* Otherwise, write the summary data in a simple parsable format. */
-    FILE *fp;
-    if (fopen_s(&fp, g_summary_file, "w")) {
+    FILE *fp = fopen(g_summary_file, "w");
+    if (!fp) {
       perror("fopen");
       return EXITCODE_MONITORING_FAILURE;
     }
@@ -417,12 +407,12 @@ static int monitor_child_process(HANDLE job_object, double start_time) {
     fprintf(fp, "%-10s %.4f\n", "sys", sys_time);
     fclose(fp);
   }
-
+#ifdef _WIN32
   CloseHandle(h_output_file);
-
+#endif
   if (g_append_exitstats && g_target_program) {
-    FILE *fp_stdout;
-    if (fopen_s(&fp_stdout, g_target_redirect_stdout, "a")) {
+    FILE *fp_stdout = fopen(g_target_redirect_stdout, "a");
+    if (!fp_stdout) {
       perror("fopen");
       return EXITCODE_MONITORING_FAILURE;
     }
@@ -434,23 +424,6 @@ static int monitor_child_process(HANDLE job_object, double start_time) {
 
   return exit_status;
 }
-
-LPSTR create_process_commandline(char *const argv[]) {
-  /* Convert argv to CreateProcess style commandline. */
-  char *command_line = malloc(1);
-  command_line[0] = '\0';
-  int argc = 0;
-  while (argv[argc] != NULL) {
-    int size = strlen(command_line) + strlen(argv[argc]) + 2;
-    command_line = realloc(command_line, size);
-    strcat_s(command_line, size, argv[argc]);
-    strcat_s(command_line, size, " ");
-    argc++;
-  }
-  command_line[strlen(command_line) - 1] = '\0';
-  return command_line;
-}
-#endif
 
 static int execute_target_process(char *const argv[]) {
 #if _WIN32
@@ -509,7 +482,7 @@ static int execute_target_process(char *const argv[]) {
   }
 
   /* Create a job object to manage the child process resources. */
-  HANDLE job_handle = CreateJobObject(NULL, NULL);
+  job_handle = CreateJobObject(NULL, NULL);
   if (job_handle == NULL) {
     printf("Failed to create the Job Object. Error code: %lu\n",
            GetLastError());
@@ -617,10 +590,8 @@ static int execute_target_process(char *const argv[]) {
     CloseHandle(proc_info.hThread);
     return EXITCODE_EXEC_FAILURE;
   }
-
-  return monitor_child_process(job_handle, sample_wall_time());
-
 #else
+
   /* Create a new process group for pid, and the process tree it may spawn. We
    * do this, because later on we might want to kill pid _and_ all processes
    * spawned by it and its descendants.
@@ -736,15 +707,16 @@ static int execute_target_process(char *const argv[]) {
   } else if (errno == EACCES) {
     return EXITCODE_EXEC_NOPERMISSION;
   }
-#endif
+
   return EXITCODE_EXEC_FAILURE;
+#endif
 }
 
 static int execute(char *const argv[]) {
-#ifndef _WIN32
   double start_time;
   pid_t pid;
 
+#ifndef _WIN32
   /* Set up signal handlers so we can terminate the monitored process(es) on
    * SIGINT or SIGTERM. */
   signal(SIGINT, terminate_handler);
@@ -752,9 +724,11 @@ static int execute(char *const argv[]) {
 
   /* Set up a signal handler to terminate the process on timeout. */
   signal(SIGALRM, timeout_handler);
+#endif
 
   start_time = sample_wall_time();
 
+#ifndef _WIN32
   /* Fork the child process. */
   pid = fork();
   if (pid < 0) {
@@ -768,12 +742,14 @@ static int execute(char *const argv[]) {
      * failure. */
     return execute_target_process(argv);
   }
+#else
+
+  /* If running on windows, do not return after creating process. */
+  execute_target_process(argv);
+#endif
 
   /* Otherwise, we are in the context of the monitoring process. */
   return monitor_child_process(pid, start_time);
-#else
-  return execute_target_process(argv);
-#endif
 }
 
 static void usage(int is_error) {
